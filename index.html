@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lane Dash</title>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #1a1035;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      width: 100vw;
+      height: 100vh;
+      font-family: 'Nunito', sans-serif;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      /* size is set dynamically by JS resize() */
+    }
+
+    #hint {
+      position: fixed;
+      bottom: 10px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.28);
+      font-family: 'Nunito', sans-serif;
+      letter-spacing: 0.04em;
+      text-align: center;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <div id="hint">↑ ↓ / W S to switch lanes &nbsp;|&nbsp; P or ESC to pause &nbsp;|&nbsp; space to start</div>
+
+  <script>
+    // ─── Canvas Setup ──────────────────────────────────────────────
+    const canvas = document.getElementById('gameCanvas');
+    const ctx    = canvas.getContext('2d');
+
+    const W = 720;
+    const H = 420;
+
+    // ─── Responsive HD Scaling ──────────────────────────────────────
+    function resize() {
+      const scaleX  = window.innerWidth  / W;
+      const scaleY  = window.innerHeight / H;
+      const cssScale = Math.min(scaleX, scaleY);  // fit inside window
+      const dpr      = window.devicePixelRatio || 1;
+
+      const displayW = Math.floor(W * cssScale);
+      const displayH = Math.floor(H * cssScale);
+
+      // CSS size — how big it looks on screen
+      canvas.style.width  = displayW + 'px';
+      canvas.style.height = displayH + 'px';
+
+      // Internal resolution — multiply by dpr for crisp HD rendering
+      canvas.width  = displayW * dpr;
+      canvas.height = displayH * dpr;
+
+      // Scale ctx so all game coordinates (0..720, 0..420) still work
+      ctx.setTransform(
+        (displayW / W) * dpr, 0,
+        0, (displayH / H) * dpr,
+        0, 0
+      );
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    // ─── Constants ─────────────────────────────────────────────────
+    const LANE_Y      = [118, 224, 330];  // vertical centers of each lane
+    const PLAYER_X    = 110;
+    const PLAYER_SIZE = 34;
+
+    const STATE = { MENU: 'menu', PLAYING: 'playing', PAUSED: 'paused', GAMEOVER: 'gameover' };
+
+    // Pastel color palette
+    const C = {
+      sky1:      '#C8C2F0',
+      sky2:      '#E8E4FF',
+      lane:      ['rgba(200,195,255,0.18)', 'rgba(185,178,255,0.12)', 'rgba(200,195,255,0.18)'],
+      divider:   'rgba(180,170,255,0.35)',
+      ground:    '#B2AADE',
+      groundTop: '#C8C2FF',
+      cloud:     'rgba(255,255,255,0.72)',
+      player:    '#FF9DC8',
+      playerEye: '#fff',
+      playerPup: '#2d2040',
+      playerChk: 'rgba(255,100,140,0.45)',
+      card:      'rgba(255,255,255,0.93)',
+      accent:    '#8C78FF',
+      text:      '#3a2f6e',
+      sub:       '#8880b8',
+      score:     '#6455c8',
+      obs:       ['#FF7BAC', '#FF9F6B', '#A78BFA', '#6BD4FF', '#72EFC1'],
+    };
+
+    // ─── State Variables ────────────────────────────────────────────
+    let state       = STATE.MENU;
+    let score       = 0;
+    let highScore   = Number(localStorage.getItem('laneDash_hs') || 0);
+    let speed       = 1.6;
+    let frameCount  = 0;
+    let spawnTimer  = 0;
+    let spawnGap    = 130;  // frames between obstacle spawns
+    let bgOffset    = 0;
+    let newRecord   = false;
+
+    // ─── Player Object ──────────────────────────────────────────────
+    const player = {
+      lane:    1,
+      y:       LANE_Y[1],
+      targetY: LANE_Y[1],
+      canSwitch: true,
+      bobTimer:  0,
+    };
+
+    // ─── Obstacles Array ────────────────────────────────────────────
+    let obstacles = [];
+
+    // ─── Clouds Array (background decoration) ───────────────────────
+    const clouds = [
+      { x: 80,  y: 38, scale: 1.0 },
+      { x: 280, y: 22, scale: 0.75 },
+      { x: 500, y: 44, scale: 0.85 },
+      { x: 660, y: 18, scale: 0.6 },
+    ];
+
+    // ─── Input Handling ─────────────────────────────────────────────
+    document.addEventListener('keydown', (e) => {
+      // Quit to menu from pause screen
+      if (e.code === 'KeyQ' && state === STATE.PAUSED) {
+        state = STATE.MENU; return;
+      }
+
+      // Pause toggle — works any time during play
+      if ((e.code === 'KeyP' || e.code === 'Escape') && state === STATE.PLAYING) {
+        state = STATE.PAUSED; return;
+      }
+      if ((e.code === 'KeyP' || e.code === 'Escape') && state === STATE.PAUSED) {
+        state = STATE.PLAYING; return;
+      }
+
+      if (e.code === 'Space' || e.code === 'Enter') {
+        if (state === STATE.PAUSED)   { state = STATE.PLAYING; return; }
+        if (state !== STATE.PLAYING)  { startGame(); return; }
+      }
+      if (state !== STATE.PLAYING) return;
+      if (!player.canSwitch) return;
+
+      if ((e.code === 'ArrowUp' || e.code === 'KeyW') && player.lane > 0) {
+        player.lane--;
+        player.targetY    = LANE_Y[player.lane];
+        player.canSwitch  = false;
+      }
+      if ((e.code === 'ArrowDown' || e.code === 'KeyS') && player.lane < 2) {
+        player.lane++;
+        player.targetY    = LANE_Y[player.lane];
+        player.canSwitch  = false;
+      }
+    });
+
+    document.addEventListener('keyup', (e) => {
+      if (['ArrowUp','ArrowDown','KeyW','KeyS'].includes(e.code)) {
+        player.canSwitch = true;
+      }
+    });
+
+    // Click / tap to start or unpause
+    canvas.addEventListener('click', () => {
+      if (state === STATE.PAUSED)  { state = STATE.PLAYING; return; }
+      if (state !== STATE.PLAYING) startGame();
+    });
+
+    // Touch swipe support
+    let touchStartX = 0;
+    canvas.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0].clientX;
+      e.preventDefault();
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', (e) => {
+      if (state !== STATE.PLAYING) { startGame(); return; }
+      const diff = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(diff) > 25 && player.canSwitch) {
+        if (diff < 0 && player.lane > 0) { player.lane--; player.targetY = LANE_Y[player.lane]; player.canSwitch = false; }
+        if (diff > 0 && player.lane < 2) { player.lane++; player.targetY = LANE_Y[player.lane]; player.canSwitch = false; }
+        setTimeout(() => { player.canSwitch = true; }, 200);
+      }
+      e.preventDefault();
+    }, { passive: false });
+
+    // ─── Game Functions ─────────────────────────────────────────────
+    function startGame() {
+      state          = STATE.PLAYING;
+      score          = 0;
+      speed          = 1.6;   // starts slow like Chrome dino
+      frameCount     = 0;
+      spawnTimer     = 0;
+      spawnGap       = 130;  // wide gap at the start — easy warmup
+      newRecord      = false;
+      obstacles      = [];
+      player.lane    = 1;
+      player.y       = LANE_Y[1];
+      player.targetY = LANE_Y[1];
+      player.canSwitch = true;
+    }
+
+    function spawnObstacle() {
+      // Pick a random lane, optionally block 2 lanes at once for harder phases
+      const lane = Math.floor(Math.random() * 3);
+      const colorIdx = Math.floor(Math.random() * C.obs.length);
+      obstacles.push({
+        x:     W + 30,
+        y:     LANE_Y[lane],
+        lane,
+        w:     38 + Math.random() * 18,
+        h:     38 + Math.random() * 18,
+        color: C.obs[colorIdx],
+      });
+    }
+
+    function checkCollision(p, o) {
+      // Slightly forgiving hitbox (80% of actual size)
+      const pw = PLAYER_SIZE * 0.8;
+      const ow = o.w * 0.8;
+      const oh = o.h * 0.8;
+      return (
+        Math.abs(p.y - o.y) < (pw / 2 + oh / 2) - 6 &&
+        Math.abs(PLAYER_X - o.x) < (pw / 2 + ow / 2) - 8
+      );
+    }
+
+    // ─── Drawing Helpers ────────────────────────────────────────────
+    function roundRect(x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function drawCloud(x, y, scale) {
+      ctx.fillStyle = C.cloud;
+      ctx.beginPath();
+      ctx.arc(x,            y,           22 * scale, 0, Math.PI * 2);
+      ctx.arc(x + 26*scale, y - 9*scale, 17 * scale, 0, Math.PI * 2);
+      ctx.arc(x + 46*scale, y,           20 * scale, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // ─── Scene Drawing ──────────────────────────────────────────────
+    function drawBackground() {
+      // Sky gradient
+      const grad = ctx.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, C.sky1);
+      grad.addColorStop(1, C.sky2);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+
+      // Scrolling clouds
+      clouds.forEach(cl => {
+        const cx = ((cl.x - bgOffset * 0.3 * cl.scale) % (W + 140) + W + 140) % (W + 140) - 80;
+        drawCloud(cx, cl.y, cl.scale);
+      });
+
+      // Lane stripe backgrounds
+      LANE_Y.forEach((ly, i) => {
+        ctx.fillStyle = C.lane[i];
+        ctx.fillRect(0, ly - 58, W, 116);
+      });
+
+      // Dashed lane dividers
+      ctx.setLineDash([18, 14]);
+      ctx.strokeStyle = C.divider;
+      ctx.lineWidth = 1.5;
+      [(LANE_Y[0]+LANE_Y[1])/2, (LANE_Y[1]+LANE_Y[2])/2].forEach(dy => {
+        ctx.beginPath();
+        ctx.moveTo(0, dy);
+        ctx.lineTo(W, dy);
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+
+      // Ground
+      ctx.fillStyle = C.groundTop;
+      ctx.fillRect(0, H - 62, W, 4);
+      ctx.fillStyle = C.ground;
+      ctx.fillRect(0, H - 58, W, 58);
+
+      // Scrolling ground markings
+      ctx.fillStyle = 'rgba(255,255,255,0.45)';
+      for (let x = -(bgOffset % 72); x < W; x += 72) {
+        ctx.fillRect(x, H - 52, 36, 3);
+      }
+    }
+
+    function drawPlayer(px, py, sad = false) {
+      const s = PLAYER_SIZE;
+      const bob = sad ? 0 : Math.sin(player.bobTimer * 0.08) * 2;
+
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.beginPath();
+      ctx.ellipse(px, py + s/2 + 5 - bob, s/2 + 2, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Body
+      ctx.fillStyle = C.player;
+      ctx.beginPath();
+      ctx.arc(px, py - bob, s/2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Ear bumps
+      ctx.fillStyle = '#FFB8D8';
+      ctx.beginPath();
+      ctx.arc(px - s/2 + 5,  py - s/2 + 4 - bob, 7, 0, Math.PI * 2);
+      ctx.arc(px + s/2 - 5,  py - s/2 + 4 - bob, 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Cheeks
+      ctx.fillStyle = C.playerChk;
+      ctx.beginPath();
+      ctx.arc(px - 10, py + 4 - bob, 7, 0, Math.PI * 2);
+      ctx.arc(px + 10, py + 4 - bob, 7, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Eyes (white)
+      ctx.fillStyle = C.playerEye;
+      ctx.beginPath();
+      ctx.arc(px - 8, py - 5 - bob, 6,   0, Math.PI * 2);
+      ctx.arc(px + 8, py - 5 - bob, 6,   0, Math.PI * 2);
+      ctx.fill();
+
+      // Pupils
+      ctx.fillStyle = C.playerPup;
+      ctx.beginPath();
+      ctx.arc(px - 7, py - 4 - bob, 3.5, 0, Math.PI * 2);
+      ctx.arc(px + 9, py - 4 - bob, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Mouth
+      ctx.strokeStyle = C.playerPup;
+      ctx.lineWidth   = 2;
+      ctx.lineCap     = 'round';
+      ctx.beginPath();
+      if (!sad) {
+        ctx.arc(px, py + 4 - bob, 7, 0.2, Math.PI - 0.2);
+      } else {
+        ctx.arc(px, py + 13 - bob, 7, Math.PI + 0.2, -0.2);
+      }
+      ctx.stroke();
+    }
+
+    function drawObstacle(o) {
+      // Shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.1)';
+      ctx.beginPath();
+      ctx.ellipse(o.x, o.y + o.h/2 + 5, o.w/2 * 0.8, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Body
+      ctx.fillStyle = o.color;
+      roundRect(o.x - o.w/2, o.y - o.h/2, o.w, o.h, 10);
+      ctx.fill();
+
+      // Shine highlight
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      roundRect(o.x - o.w/2 + 5, o.y - o.h/2 + 5, o.w * 0.35, o.h * 0.25, 5);
+      ctx.fill();
+
+      // Grumpy eyes
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.beginPath();
+      ctx.arc(o.x - 8, o.y - 4, 4, 0, Math.PI * 2);
+      ctx.arc(o.x + 8, o.y - 4, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Grumpy mouth
+      ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+      ctx.lineWidth   = 2;
+      ctx.lineCap     = 'round';
+      ctx.beginPath();
+      ctx.moveTo(o.x - 7, o.y + 7);
+      ctx.lineTo(o.x + 7, o.y + 7);
+      ctx.stroke();
+    }
+
+    function drawScoreHUD() {
+      // Left pill — high score
+      ctx.fillStyle = 'rgba(255,255,255,0.88)';
+      roundRect(14, 14, 148, 34, 17);
+      ctx.fill();
+      ctx.fillStyle = C.score;
+      ctx.font      = '600 13px Nunito, sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Best: ${Math.floor(highScore)}`, 26, 36);
+
+      // Right pill — current score
+      ctx.fillStyle = 'rgba(255,255,255,0.88)';
+      roundRect(W - 162, 14, 148, 34, 17);
+      ctx.fill();
+      ctx.fillStyle = C.score;
+      ctx.font      = '600 13px Nunito, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(`Score: ${Math.floor(score)}`, W - 26, 36);
+
+      // Speed level indicator (top center)
+      const lvl = Math.floor((speed - 1.6) / 1.2) + 1; // level 1 to ~11
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.font      = '600 11px Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(`Lv.${lvl}  P / ESC to pause`, W/2, 28);
+    }
+
+    function drawPaused() {
+      // Frozen game underneath
+      drawBackground();
+      obstacles.forEach(drawObstacle);
+      drawPlayer(PLAYER_X, player.y, false);
+      drawScoreHUD();
+
+      // Dim overlay
+      ctx.fillStyle = 'rgba(40,30,100,0.55)';
+      ctx.fillRect(0, 0, W, H);
+
+      // Pause card
+      const cw = 300, ch = 230, cx = (W - cw)/2, cy = (H - ch)/2;
+      ctx.fillStyle = C.card;
+      roundRect(cx, cy, cw, ch, 22);
+      ctx.fill();
+
+      // Pause icon (two bars)
+      ctx.fillStyle = C.accent;
+      roundRect(W/2 - 22, cy + 28, 14, 36, 4);
+      ctx.fill();
+      roundRect(W/2 + 8,  cy + 28, 14, 36, 4);
+      ctx.fill();
+
+      // Title
+      ctx.fillStyle = C.text;
+      ctx.font      = '800 28px Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Paused', W/2, cy + 108);
+
+      // Current score
+      ctx.fillStyle = C.sub;
+      ctx.font      = '600 14px Nunito, sans-serif';
+      ctx.fillText(`Score so far: ${Math.floor(score)}`, W/2, cy + 134);
+
+      // Resume button
+      ctx.fillStyle = C.accent;
+      roundRect(W/2 - 80, cy + 150, 160, 38, 19);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font      = '700 14px Nunito, sans-serif';
+      ctx.fillText('Resume (P / ESC)', W/2, cy + 174);
+
+      // Quit to menu button
+      ctx.fillStyle = 'rgba(140,120,255,0.15)';
+      roundRect(W/2 - 80, cy + 196, 160, 34, 17);
+      ctx.fill();
+      ctx.fillStyle = C.accent;
+      ctx.font      = '600 13px Nunito, sans-serif';
+      ctx.fillText('Quit to Menu (Q)', W/2, cy + 218);
+    }
+
+    // ─── Screen Drawing ─────────────────────────────────────────────
+    function drawMenu() {
+      drawBackground();
+
+      // Center card
+      const cw = 340, ch = 270, cx = (W - cw) / 2, cy = (H - ch) / 2 - 10;
+      ctx.fillStyle = C.card;
+      roundRect(cx, cy, cw, ch, 22);
+      ctx.fill();
+
+      // Title
+      ctx.fillStyle = C.accent;
+      ctx.font      = '800 44px Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Lane Dash', W/2, cy + 62);
+
+      // Tagline
+      ctx.fillStyle = C.sub;
+      ctx.font      = '600 14px Nunito, sans-serif';
+      ctx.fillText('Switch lanes. Dodge everything.', W/2, cy + 90);
+
+      // Mini player preview
+      drawPlayer(W/2, cy + 148, false);
+
+      // Controls hint
+      ctx.fillStyle = C.sub;
+      ctx.font      = '600 13px Nunito, sans-serif';
+      ctx.fillText('↑ ↓ or W S to switch lanes', W/2, cy + 198);
+
+      // Start button
+      ctx.fillStyle = C.accent;
+      roundRect(W/2 - 90, cy + 214, 180, 40, 20);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font      = '700 15px Nunito, sans-serif';
+      ctx.fillText('Press SPACE or click', W/2, cy + 239);
+
+      // High score
+      if (highScore > 0) {
+        ctx.fillStyle = '#b0a8e0';
+        ctx.font      = '600 12px Nunito, sans-serif';
+        ctx.fillText(`High Score: ${Math.floor(highScore)}`, W/2, cy + ch + 22);
+      }
+    }
+
+    function drawGameOver() {
+      drawBackground();
+
+      // Dim overlay
+      ctx.fillStyle = 'rgba(80,60,160,0.22)';
+      ctx.fillRect(0, 0, W, H);
+
+      // Card
+      const cw = 310, ch = 260, cx = (W - cw)/2, cy = (H - ch)/2 - 10;
+      ctx.fillStyle = C.card;
+      roundRect(cx, cy, cw, ch, 22);
+      ctx.fill();
+
+      // Game over title
+      ctx.fillStyle = '#FF6B95';
+      ctx.font      = '800 36px Nunito, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Game Over!', W/2, cy + 55);
+
+      // Score
+      ctx.fillStyle = C.text;
+      ctx.font      = '700 20px Nunito, sans-serif';
+      ctx.fillText(`Score: ${Math.floor(score)}`, W/2, cy + 94);
+
+      // New record or best
+      if (newRecord && score > 0) {
+        ctx.fillStyle = '#FF9EBC';
+        ctx.font      = '700 14px Nunito, sans-serif';
+        ctx.fillText('✦ New High Score! ✦', W/2, cy + 118);
+      } else {
+        ctx.fillStyle = C.sub;
+        ctx.font      = '600 13px Nunito, sans-serif';
+        ctx.fillText(`Best: ${Math.floor(highScore)}`, W/2, cy + 118);
+      }
+
+      // Sad player
+      drawPlayer(W/2, cy + 172, true);
+
+      // Retry button
+      ctx.fillStyle = C.accent;
+      roundRect(W/2 - 85, cy + 206, 170, 38, 19);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font      = '700 14px Nunito, sans-serif';
+      ctx.fillText('Press SPACE to retry', W/2, cy + 230);
+    }
+
+    // ─── Update Logic ───────────────────────────────────────────────
+    function update() {
+      if (state !== STATE.PLAYING) return;
+
+      frameCount++;
+      score     += speed * 0.045;
+      bgOffset  += speed;
+      player.bobTimer++;
+
+      // Smooth lane slide
+      player.y += (player.targetY - player.y) * 0.16;
+
+      // Continuous speed ramp — tiny increase every frame (Chrome dino style)
+      // Starts slow, gets scary fast over time. Max speed capped at 14.
+      speed    = Math.min(speed + 0.0010, 14);
+
+      // Spawn gap shrinks automatically as speed grows — no sudden jumps
+      spawnGap = Math.max(38, 130 - speed * 8);
+
+      // Spawn obstacles
+      spawnTimer++;
+      if (spawnTimer >= spawnGap) {
+        spawnObstacle();
+        spawnTimer = Math.floor(Math.random() * 12); // slight randomness
+      }
+
+      // Move & cull obstacles
+      obstacles.forEach(o => o.x -= speed);
+      obstacles = obstacles.filter(o => o.x > -80);
+
+      // Collision detection
+      for (const o of obstacles) {
+        if (checkCollision(player, o)) {
+          if (score > highScore) {
+            highScore = score;
+            newRecord = true;
+            localStorage.setItem('laneDash_hs', highScore);
+          }
+          state = STATE.GAMEOVER;
+          return;
+        }
+      }
+    }
+
+    // ─── Main Draw ──────────────────────────────────────────────────
+    function draw() {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+
+      if (state === STATE.MENU)     { drawMenu();     return; }
+      if (state === STATE.GAMEOVER) { drawGameOver(); return; }
+      if (state === STATE.PAUSED)   { drawPaused();   return; }
+
+      // Playing
+      drawBackground();
+      obstacles.forEach(drawObstacle);
+      drawPlayer(PLAYER_X, player.y, false);
+      drawScoreHUD();
+    }
+
+    // ─── Game Loop ──────────────────────────────────────────────────
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    loop();
+  </script>
+</body>
+</html>

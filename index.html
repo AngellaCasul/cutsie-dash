@@ -71,7 +71,17 @@
       card:'rgba(255,255,255,0.93)', accent:'#8C78FF', text:'#3a2f6e', sub:'#8880b8', score:'#6455c8',
       obs:['#FF7BAC','#FF9F6B','#A78BFA','#6BD4FF','#72EFC1'],
     };
-    const COIN_R = 11;  // coin radius
+    const COIN_R = 11;
+
+    // ─── Flip System ───────────────────────────────────────────────
+    let flipState    = 'none'; // 'none' | 'warning' | 'animating' | 'active' | 'unflipping'
+    let flipTimer    = 0;
+    let flipProgress = 0;      // 0 = normal, 1 = fully mirrored
+    let nextFlipIdx  = 0;
+    const FLIP_THRESHOLDS   = [5.0, 8.0, 11.0];
+    const FLIP_WARN_FRAMES  = 600;   // 10s warning
+    const FLIP_ANIM_FRAMES  = 50;    // ~0.8s flip animation
+    const FLIP_ACTIVE_FRAMES = 900;  // 15s stay mirrored
 
     // ─── Audio System ──────────────────────────────────────────────
     const SFX = (() => {
@@ -122,7 +132,6 @@
         src.start(start); src.stop(start + dur + 0.02);
       }
 
-      // ── SFX ──
       function laneSwitch() {
         initCtx(); const t = actx.currentTime;
         tone(660, t, 0.07, 'sine', 0.13);
@@ -134,7 +143,7 @@
       }
       function collectCoin() {
         initCtx(); const t = actx.currentTime;
-        tone(1047, t,       0.07, 'sine', 0.18);
+        tone(1047, t,        0.07, 'sine', 0.18);
         tone(1319, t + 0.07, 0.07, 'sine', 0.16);
         tone(1568, t + 0.14, 0.09, 'sine', 0.14);
       }
@@ -144,7 +153,7 @@
       }
       function gameOver() {
         initCtx(); const t = actx.currentTime;
-        tone(440, t,       0.15, 'sawtooth', 0.22);
+        tone(440, t,        0.15, 'sawtooth', 0.22);
         tone(330, t + 0.16, 0.15, 'sawtooth', 0.22);
         tone(220, t + 0.32, 0.15, 'sawtooth', 0.22);
         tone(165, t + 0.48, 0.45, 'sawtooth', 0.28);
@@ -152,7 +161,7 @@
       }
       function milestone() {
         initCtx(); const t = actx.currentTime;
-        tone(880, t, 0.07, 'sine', 0.12);
+        tone(880,  t,       0.07, 'sine', 0.12);
         tone(1100, t + 0.08, 0.07, 'sine', 0.12);
       }
       function newHighScore() {
@@ -160,7 +169,6 @@
         [523, 659, 784, 880, 1047].forEach((f, i) => tone(f, t + i * 0.09, 0.16, 'square', 0.16));
       }
 
-      // ── Background Music ──
       const BPM = 138, EIGHTH = (60 / BPM) / 2;
       const F = {
         C3:130.81, F3:174.61, G3:196.00, A3:220.00,
@@ -237,13 +245,11 @@
     let newRecord     = false;
     let lastMilestone = 0;
 
-    // Coin state
     let coins          = [];
     let coinSpawnTimer = 0;
     let coinsCollected = 0;
     const COIN_POINTS  = 10;
 
-    // Floating "+N" text
     let floatingTexts = [];
 
     // ─── Player ─────────────────────────────────────────────────────
@@ -263,6 +269,9 @@
     document.addEventListener('keydown', (e) => {
       if (e.code === 'KeyM') { SFX.toggleMute(); return; }
 
+      if (e.code === 'KeyH' && state === STATE.GAMEOVER) {
+        SFX.stopMusic(); state = STATE.MENU; return;
+      }
       if (e.code === 'KeyQ' && state === STATE.PAUSED) {
         SFX.stopMusic(); state = STATE.MENU; return;
       }
@@ -282,11 +291,6 @@
         player.lane--; player.targetY = LANE_Y[player.lane];
         player.canSwitch = false; SFX.laneSwitch();
       }
-
-      if (e.code === 'KeyH' && state === STATE.GAMEOVER) {
-        SFX.stopMusic(); state = STATE.MENU; return;
-      }
-
       if ((e.code === 'ArrowDown' || e.code === 'KeyS') && player.lane < 2) {
         player.lane++; player.targetY = LANE_Y[player.lane];
         player.canSwitch = false; SFX.laneSwitch();
@@ -298,26 +302,18 @@
     });
 
     canvas.addEventListener('click', (e) => {
-      if (state === STATE.PAUSED)  { SFX.resumeMusic(); state = STATE.PLAYING; return; }
+      if (state === STATE.PAUSED) { SFX.resumeMusic(); state = STATE.PLAYING; return; }
 
       if (state === STATE.GAMEOVER) {
-        // Figure out where the home button is in CSS pixels
-        const rect    = canvas.getBoundingClientRect();
-        const cssX    = e.clientX - rect.left;
-        const cssY    = e.clientY - rect.top;
-        const scaleX  = W / rect.width;
-        const scaleY  = H / rect.height;
-        const gx      = cssX * scaleX;
-        const gy      = cssY * scaleY;
-
-        const ch = 330, cy = (H - ch) / 2 - 10;
-        const btnX = W/2 - 85, btnY = cy + 278, btnW = 170, btnH = 36;
-
+        const rect   = canvas.getBoundingClientRect();
+        const gx     = (e.clientX - rect.left) * (W / rect.width);
+        const gy     = (e.clientY - rect.top)  * (H / rect.height);
+        const ch     = 330, cy = (H - ch) / 2 - 10;
+        const btnX   = W/2 - 85, btnY = cy + 278, btnW = 170, btnH = 36;
         if (gx >= btnX && gx <= btnX + btnW && gy >= btnY && gy <= btnY + btnH) {
           SFX.stopMusic(); state = STATE.MENU; return;
         }
-        startGame();
-        return;
+        startGame(); return;
       }
 
       if (state !== STATE.PLAYING) startGame();
@@ -350,66 +346,65 @@
       newRecord = false; obstacles = []; coins = []; floatingTexts = [];
       player.lane = 1; player.y = LANE_Y[1]; player.targetY = LANE_Y[1];
       player.canSwitch = true;
+      flipState = 'none'; flipTimer = 0; flipProgress = 0; nextFlipIdx = 0;
       SFX.gameStart(); SFX.startMusic();
     }
 
-    // Spawns one obstacle, OR at higher speeds blocks 2 lanes (always leaving 1 safe)
     function spawnObstacles() {
-  const SAFE_BUFFER = 130;
-  const blockTwo = speed > 4.5 && Math.random() < 0.40;
+      const SAFE_BUFFER = 130;
+      const blockTwo = speed > 4.5 && Math.random() < 0.40;
 
-  if (blockTwo) {
-    const safeLane = Math.floor(Math.random() * 3);
-    let xOffset = 0;
-    [0, 1, 2].filter(l => l !== safeLane).forEach(lane => {
-      const spawnX = W + 30 + xOffset;
-      const coinNearby = coins.some(c => !c.collected && c.lane === lane && Math.abs(c.x - spawnX) < SAFE_BUFFER);
-      if (!coinNearby) {
-        obstacles.push({
-          x: spawnX, y: LANE_Y[lane], lane,
-          w: 36 + Math.random() * 14,
-          h: 36 + Math.random() * 14,
-          color: C.obs[Math.floor(Math.random() * C.obs.length)],
-          passed: false,
+      if (blockTwo) {
+        const safeLane = Math.floor(Math.random() * 3);
+        let xOffset = 0;
+        [0, 1, 2].filter(l => l !== safeLane).forEach(lane => {
+          const spawnX = W + 30 + xOffset;
+          const coinNearby = coins.some(c => !c.collected && c.lane === lane && Math.abs(c.x - spawnX) < SAFE_BUFFER);
+          if (!coinNearby) {
+            obstacles.push({
+              x: spawnX, y: LANE_Y[lane], lane,
+              w: 36 + Math.random() * 14,
+              h: 36 + Math.random() * 14,
+              color: C.obs[Math.floor(Math.random() * C.obs.length)],
+              passed: false,
+            });
+          }
+          xOffset += Math.random() * 28;
+        });
+      } else {
+        const lane = Math.floor(Math.random() * 3);
+        const spawnX = W + 30;
+        const coinNearby = coins.some(c => !c.collected && c.lane === lane && Math.abs(c.x - spawnX) < SAFE_BUFFER);
+        if (!coinNearby) {
+          obstacles.push({
+            x: spawnX, y: LANE_Y[lane], lane,
+            w: 38 + Math.random() * 18,
+            h: 38 + Math.random() * 18,
+            color: C.obs[Math.floor(Math.random() * C.obs.length)],
+            passed: false,
+          });
+        }
+      }
+    }
+
+    function spawnCoin() {
+      const lane    = Math.floor(Math.random() * 3);
+      const startX  = W + 30;
+      const SAFE_BUFFER = 130;
+      const obstacleNearby = obstacles.some(o => o.lane === lane && Math.abs(o.x - startX) < SAFE_BUFFER);
+      if (obstacleNearby) return;
+
+      const count = Math.random() < 0.45 ? 2 : 1;
+      for (let i = 0; i < count; i++) {
+        coins.push({
+          x: startX + i * 36,
+          y: LANE_Y[lane],
+          lane,
+          bob: Math.random() * Math.PI * 2,
+          collected: false,
         });
       }
-      xOffset += Math.random() * 28;
-    });
-  } else {
-    const lane = Math.floor(Math.random() * 3);
-    const spawnX = W + 30;
-    const coinNearby = coins.some(c => !c.collected && c.lane === lane && Math.abs(c.x - spawnX) < SAFE_BUFFER);
-    if (!coinNearby) {
-      obstacles.push({
-        x: spawnX, y: LANE_Y[lane], lane,
-        w: 38 + Math.random() * 18,
-        h: 38 + Math.random() * 18,
-        color: C.obs[Math.floor(Math.random() * C.obs.length)],
-        passed: false,
-      });
     }
-  }
-}
-
-function spawnCoin() {
-  const lane   = Math.floor(Math.random() * 3);
-  const startX = W + 30;
-  const SAFE_BUFFER = 130;
-
-  const obstacleNearby = obstacles.some(o => o.lane === lane && Math.abs(o.x - startX) < SAFE_BUFFER);
-  if (obstacleNearby) return;
-
-  const count = Math.random() < 0.45 ? 2 : 1;
-  for (let i = 0; i < count; i++) {
-    coins.push({
-      x: startX + i * 36,
-      y: LANE_Y[lane],
-      lane,
-      bob: Math.random() * Math.PI * 2,
-      collected: false,
-    });
-  }
-}
 
     function checkCollision(p, o) {
       const pw = PLAYER_SIZE * 0.8, ow = o.w * 0.8, oh = o.h * 0.8;
@@ -417,6 +412,38 @@ function spawnCoin() {
         Math.abs(p.y - o.y)      < (pw / 2 + oh / 2) - 6 &&
         Math.abs(PLAYER_X - o.x) < (pw / 2 + ow / 2) - 8
       );
+    }
+
+    // ─── Flip Update ────────────────────────────────────────────────
+    function updateFlip() {
+      if (flipState === 'none' && nextFlipIdx < FLIP_THRESHOLDS.length
+          && speed >= FLIP_THRESHOLDS[nextFlipIdx]) {
+        nextFlipIdx++;
+        flipState = 'warning';
+        flipTimer = FLIP_WARN_FRAMES;
+      }
+
+      if (flipState === 'warning') {
+        flipTimer--;
+        if (flipTimer <= 0) { flipState = 'animating'; flipTimer = FLIP_ANIM_FRAMES; }
+      }
+
+      if (flipState === 'animating') {
+        flipTimer--;
+        flipProgress = 1 - flipTimer / FLIP_ANIM_FRAMES;
+        if (flipTimer <= 0) { flipState = 'active'; flipTimer = FLIP_ACTIVE_FRAMES; flipProgress = 1; }
+      }
+
+      if (flipState === 'active') {
+        flipTimer--;
+        if (flipTimer <= 0) { flipState = 'unflipping'; flipTimer = FLIP_ANIM_FRAMES; }
+      }
+
+      if (flipState === 'unflipping') {
+        flipTimer--;
+        flipProgress = flipTimer / FLIP_ANIM_FRAMES;
+        if (flipTimer <= 0) { flipState = 'none'; flipProgress = 0; }
+      }
     }
 
     // ─── Drawing Helpers ────────────────────────────────────────────
@@ -530,11 +557,9 @@ function spawnCoin() {
       const cx  = coin.x;
       const cy  = coin.y + bob;
 
-      // Shadow
       ctx.fillStyle = 'rgba(0,0,0,0.12)';
       ctx.beginPath(); ctx.ellipse(cx, coin.y + COIN_R + 6, COIN_R * 0.7, 4, 0, 0, Math.PI * 2); ctx.fill();
 
-      // Coin body — radial gradient for depth
       const grad = ctx.createRadialGradient(cx - 3, cy - 3, 1, cx, cy, COIN_R);
       grad.addColorStop(0, '#FFF176');
       grad.addColorStop(0.6, '#FFD700');
@@ -542,15 +567,12 @@ function spawnCoin() {
       ctx.fillStyle = grad;
       ctx.beginPath(); ctx.arc(cx, cy, COIN_R, 0, Math.PI * 2); ctx.fill();
 
-      // Rim
       ctx.strokeStyle = '#C8900A'; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(cx, cy, COIN_R - 1.5, 0, Math.PI * 2); ctx.stroke();
 
-      // Shine
       ctx.fillStyle = 'rgba(255,255,255,0.65)';
       ctx.beginPath(); ctx.ellipse(cx - 3, cy - 4, 4, 2.5, -0.5, 0, Math.PI * 2); ctx.fill();
 
-      // Star label
       ctx.fillStyle = '#92650A';
       ctx.font = '700 10px Nunito, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -575,13 +597,11 @@ function spawnCoin() {
 
     // ─── HUD ────────────────────────────────────────────────────────
     function drawScoreHUD() {
-      // Left pill — best score
       ctx.fillStyle = 'rgba(255,255,255,0.88)';
       roundRect(14, 14, 148, 34, 17); ctx.fill();
       ctx.fillStyle = C.score; ctx.font = '600 13px Nunito, sans-serif'; ctx.textAlign = 'left';
       ctx.fillText(`Best: ${Math.floor(highScore)}`, 26, 36);
 
-      // Right pill — score + coin count
       ctx.fillStyle = 'rgba(255,255,255,0.88)';
       roundRect(W - 196, 14, 182, 34, 17); ctx.fill();
       ctx.fillStyle = C.score; ctx.font = '600 13px Nunito, sans-serif'; ctx.textAlign = 'right';
@@ -590,12 +610,66 @@ function spawnCoin() {
       ctx.font = '700 12px Nunito, sans-serif'; ctx.textAlign = 'left';
       ctx.fillText(`✦ ${coinsCollected}`, W - 192, 36);
 
-      // Center — level + mute hint
       const muteIcon = SFX.isMuted() ? '🔇' : '🔊';
       const lvl = Math.floor((speed - 1.6) / 1.2) + 1;
       ctx.fillStyle = 'rgba(255,255,255,0.5)';
       ctx.font = '600 11px Nunito, sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(`Lv.${lvl}  ${muteIcon} M  |  P / ESC pause`, W / 2, 28);
+    }
+
+    // ─── Flip Warning ───────────────────────────────────────────────
+    function drawFlipWarning() {
+      const t         = Date.now() / 1000;
+      const countdown = Math.ceil(flipTimer / 60);
+      const pulse     = 0.75 + 0.25 * Math.sin(t * 8);
+      const urgency   = 1 - flipTimer / FLIP_WARN_FRAMES;
+      const isUrgent  = countdown <= 3;
+
+      // Subtle flashing border — only visible in last 5 seconds
+      if (urgency > 0.5) {
+        ctx.save();
+        ctx.globalAlpha = pulse * 0.35 * ((urgency - 0.5) * 2);
+        ctx.strokeStyle = '#FF8C00';
+        ctx.lineWidth   = 10;
+        ctx.strokeRect(0, 0, W, H);
+        ctx.restore();
+      }
+
+      // Compact top-left toast
+      const bw = 210, bh = 52, bx = 14, by = 56;
+      ctx.save();
+      ctx.globalAlpha = 0.92;
+      ctx.fillStyle   = '#2d1a50';
+      roundRect(bx, by, bw, bh, 12); ctx.fill();
+      ctx.strokeStyle = isUrgent ? '#FF4500' : '#FF8C00';
+      ctx.lineWidth   = 2 * pulse;
+      roundRect(bx, by, bw, bh, 12); ctx.stroke();
+
+      ctx.globalAlpha = 1;
+      ctx.textAlign   = 'left';
+      ctx.fillStyle   = isUrgent ? '#FF6060' : '#FFB347';
+      ctx.font        = '800 12px Nunito, sans-serif';
+      ctx.fillText('⚠️ MIRROR INCOMING', bx + 12, by + 18);
+
+      ctx.fillStyle = '#c8c0ff';
+      ctx.font      = '600 11px Nunito, sans-serif';
+      ctx.fillText('Obstacles flip LEFT!', bx + 12, by + 34);
+
+      // Big countdown on the right side of the toast
+      const numPulse = 1 + (isUrgent ? 0.2 * Math.sin(t * 12) : 0);
+      ctx.save();
+      ctx.translate(bx + bw - 28, by + bh / 2 + 2);
+      ctx.scale(numPulse, numPulse);
+      ctx.textAlign   = 'center';
+      ctx.fillStyle   = isUrgent ? '#FF4500' : '#FFD700';
+      ctx.font        = `900 26px Nunito, sans-serif`;
+      ctx.shadowColor = isUrgent ? '#FF4500' : '#FFD700';
+      ctx.shadowBlur  = 10 * pulse;
+      ctx.fillText(countdown, 0, 0);
+      ctx.shadowBlur  = 0;
+      ctx.restore();
+
+      ctx.restore();
     }
 
     // ─── Screens ────────────────────────────────────────────────────
@@ -710,8 +784,9 @@ function spawnCoin() {
 
       player.y += (player.targetY - player.y) * 0.16;
 
+      updateFlip();
+
       speed    = Math.min(speed + 0.0010, 14);
-      // More obstacles: min gap 30 (was 38), starts at 90 (was 130)
       spawnGap = Math.max(30, 90 - speed * 7);
 
       // ── Obstacle spawning ──
@@ -721,7 +796,7 @@ function spawnCoin() {
         spawnTimer = Math.floor(Math.random() * 10);
       }
 
-      // ── Coin spawning (gap 55–80 frames, shrinks slightly with speed) ──
+      // ── Coin spawning ──
       const coinGap = Math.max(55, 80 - speed * 2);
       coinSpawnTimer++;
       if (coinSpawnTimer >= coinGap) {
@@ -729,7 +804,7 @@ function spawnCoin() {
         coinSpawnTimer = Math.floor(Math.random() * 15);
       }
 
-      // ── Move obstacles; fire dodge SFX when one clears the player ──
+      // ── Move obstacles ──
       obstacles.forEach(o => {
         o.x -= speed;
         if (!o.passed && o.x < PLAYER_X - PLAYER_SIZE) {
@@ -766,10 +841,8 @@ function spawnCoin() {
       // ── Collision detection ──
       for (const o of obstacles) {
         if (checkCollision(player, o)) {
-          // Persist cumulative coin count
           totalCoins += coinsCollected;
           localStorage.setItem('laneDash_coins', totalCoins);
-
           if (score > highScore) {
             highScore = score; newRecord = true;
             localStorage.setItem('laneDash_hs', highScore);
@@ -792,13 +865,36 @@ function spawnCoin() {
       if (state === STATE.GAMEOVER) { drawGameOver(); return; }
       if (state === STATE.PAUSED)   { drawPaused();   return; }
 
-      // Playing
+      // Apply horizontal mirror transform to game world only
+      ctx.save();
+      if (flipProgress > 0) {
+        const scaleX = Math.cos(flipProgress * Math.PI); // 1 → 0 → -1
+        ctx.translate(W / 2, 0);
+        ctx.scale(scaleX, 1);
+        ctx.translate(-W / 2, 0);
+      }
       drawBackground();
-      coins.filter(c => !c.collected).forEach(drawCoin);   // coins drawn under obstacles
+      coins.filter(c => !c.collected).forEach(drawCoin);
       obstacles.forEach(drawObstacle);
       drawPlayer(PLAYER_X, player.y, false);
       drawFloatingTexts();
+      ctx.restore(); // HUD always right-side up
+
       drawScoreHUD();
+
+      if (flipState === 'warning') drawFlipWarning();
+
+      // Reminder bar while mirrored
+      if (flipState === 'active') {
+        const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 300);
+        ctx.save();
+        ctx.globalAlpha = pulse * 0.85;
+        ctx.fillStyle   = '#FF8C00';
+        ctx.font        = '800 13px Nunito, sans-serif';
+        ctx.textAlign   = 'center';
+        ctx.fillText('🔀 MIRRORED — obstacles coming from the LEFT!', W / 2, H - 14);
+        ctx.restore();
+      }
     }
 
     // ─── Loop ────────────────────────────────────────────────────────

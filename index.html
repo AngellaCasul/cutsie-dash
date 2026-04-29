@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cutie Dash</title>
+  <title>Cutsie Dash</title>
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -235,8 +235,8 @@
     // ─── State Variables ────────────────────────────────────────────
     let state         = STATE.MENU;
     let score         = 0;
-    let highScore     = Number(localStorage.getItem('cutieDash_hs')    || 0);
-    let totalCoins    = Number(localStorage.getItem('cutieDash_coins') || 0);
+    let highScore     = Number(localStorage.getItem('cutsieDash_hs')    || 0);
+    let totalCoins    = Number(localStorage.getItem('cutsieDash_coins') || 0);
     let speed         = 1.6;
     let frameCount    = 0;
     let spawnTimer    = 0;
@@ -710,7 +710,7 @@
       ctx.fillStyle = C.card; roundRect(cx, cy, cw, ch, 22); ctx.fill();
 
       ctx.fillStyle = C.accent; ctx.font = '800 44px Nunito, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('Cutie Dash', W / 2, cy + 62);
+      ctx.fillText('Cutsie Dash', W / 2, cy + 62);
 
       ctx.fillStyle = C.sub; ctx.font = '600 14px Nunito, sans-serif';
       ctx.fillText('Dodge blocks · Grab coins · Survive!', W / 2, cy + 90);
@@ -842,10 +842,10 @@
       for (const o of obstacles) {
         if (checkCollision(player, o)) {
           totalCoins += coinsCollected;
-          localStorage.setItem('cutieDash_coins', totalCoins);
+          localStorage.setItem('cutsieDash_coins', totalCoins);
           if (score > highScore) {
             highScore = score; newRecord = true;
-            localStorage.setItem('cutieDash_hs', highScore);
+            localStorage.setItem('cutsieDash_hs', highScore);
             SFX.newHighScore();
           } else {
             SFX.gameOver();

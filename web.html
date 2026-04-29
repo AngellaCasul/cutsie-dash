@@ -400,17 +400,30 @@
       width: 34px; height: 34px;
       min-width: 34px;
       border-radius: 50%;
-      background: var(--pink-dark);
-      color: white;
+      background: #f4c2d8; /* pastel pink */
+      color: #b05080;
       font-weight: 800;
       font-size: 0.95rem;
       display: flex;
       align-items: center;
       justify-content: center;
     }
+    
+    .step-num.lav {
+  background: #d4c9f5;   /* pastel lavender */
+  color: #7060b0;
+    }
+    
+    .step-num.sky {
+  background: #a8dff5;   /* pastel sky blue */
+  color: #3080a8;
+    }
 
     .step-num.lav { background: var(--lav-dark); }
     .step-num.sky { background: var(--sky-dark); }
+    .step-num.mint  { background: #b5ebd5; color: #2a8060; }
+    .step-num.peach { background: #ffd6a5; color: #a06020; }
+    .step-num.rose  { background: #f9c4c4; color: #a03030; }
 
     .step-text { font-size: 0.98rem; font-weight: 600; line-height: 1.5; color: var(--text); }
     .step-text strong { color: var(--pink-dark); }
@@ -569,7 +582,7 @@
   </h1>
 
   <p class="hero-sub">
-    A cute endless runner where you dodge obstacles by switching lanes.<br>
+    A cute endless runner where you dodge obstacles, collect coins, and adapt to unexpected twists.
     How far can you go? 🌸
   </p>
 
@@ -681,9 +694,12 @@
       <div class="section-tag">About the Game</div>
       <h2 class="section-title">Dodge, dash &amp; survive!</h2>
       <p class="section-desc">
-        Cutsie-Dash is an adorable endless runner where you play as a squishy pink creature
-        hopping between lanes to dodge incoming blue cube enemies. The longer you survive,
-        the higher your score — can you beat your personal best?
+        Cutsie-Dash is an adorable endless runner where you play as a squishy pink creature 
+        hopping between lanes to dodge incoming blue cube enemies. 
+        But now, it's not just about survival but you can also collect coins 
+        scattered across the lanes to boost your score and challenge yourself even more. 
+        The longer you survive and the more coins you grab, the higher your score
+        So...Can you beat your personal best?
       </p>
 
       <div class="steps">
@@ -697,7 +713,19 @@
         </div>
         <div class="step">
           <div class="step-num sky">3</div>
-          <div class="step-text"><strong>Beat your best</strong> — survive as long as possible. Each level speeds things up. Press P or ESC to pause.</div>
+          <div class="step-text"><strong>Collect coins</strong> — grab as many coins as you can while staying alive to maximize your score.</div>
+        </div>
+        <div class="step">
+          <div class="step-num sky">4</div>
+          <div class="step-text"><strong>Watch for warnings</strong> when the game speeds up, a countdown appears before the screen flips.</div>
+        </div>
+        <div class="step">
+          <div class="step-num sky">5</div>
+          <div class="step-text"><strong>Adapt fast</strong>— controls and directions reverse after the flip, so stay focused!</div>
+        </div>
+        <div class="step">
+          <div class="step-num sky">6</div>
+          <div class="step-text"><strong>Beat your best</strong>— survive as long as possible. Each level gets faster and trickier. Press P or ESC to pause.</div>
         </div>
       </div>
     </div>
